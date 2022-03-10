@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: UNLICENSED
 // PLay Poseidon GameCoin Contracts v1.0
 
-pragma solidity ^0.8.0;
+pragma solidity 0.8.12;
 
 import "@openzeppelin/contracts/token/ERC20/extensions/ERC20Burnable.sol";
 import "@openzeppelin/contracts/token/ERC20/extensions/ERC20Pausable.sol";
@@ -29,7 +29,7 @@ interface IERC20Deflationary is IERC20 {
 
 abstract contract BotPrevent {
 
-    function protect(address sender, address receiver, uint256 amount) external virtual;
+    function protect(address sender, address receiver, uint256 amount) public virtual;
 
 }
 
@@ -47,11 +47,17 @@ contract GameCoin is AccessControlEnumerable, ERC20Burnable, ERC20Pausable {
         uint256 treasuryPercent,
         uint256 burnPercent,
         uint256 stopBurnSupply) ERC20(name, symbol){
+        require(owner != address(0), "GameCoin: owner address must not be zero");
+        require(treasury != address(0), "GameCoin: treasury address must not be zero");
         _mint(owner, initialSupply);
-        _treasuryAddress = treasury;
-        _transferFeeTreasuryPercent = treasuryPercent;
-        _transferFeeBurnPercent = burnPercent;
-        _transferStopBurnWhenLowSupply = stopBurnSupply;
+        treasuryAddress = treasury;
+
+        require(treasuryPercent < 10, "GameCoin: transferFeeTreasuryPercent must be lower than 10%");
+        transferFeeTreasuryPercent = treasuryPercent;
+        require(burnPercent < 10, "GameCoin: transferFeeBurnPercent must be lower than 10%");
+        transferFeeBurnPercent = burnPercent;
+        require(stopBurnSupply < initialSupply, "GameCoin: stopBurnSupply must be lower than total supply");
+        transferStopBurnWhenLowSupply = stopBurnSupply;
 
         _setupRole(DEFAULT_ADMIN_ROLE, owner);
         _setupRole(WHITELISTER_ROLE, owner);
@@ -60,36 +66,21 @@ contract GameCoin is AccessControlEnumerable, ERC20Burnable, ERC20Pausable {
 
     mapping(address => bool) private _senderWhitelist;
     mapping(address => bool) private _recipientWhitelist;
-    address private immutable _treasuryAddress;
-    uint256 private immutable _transferFeeTreasuryPercent;
-    uint256 private immutable _transferFeeBurnPercent;
-    uint256 private immutable _transferStopBurnWhenLowSupply;
+    address public immutable treasuryAddress;
+    uint256 public immutable transferFeeTreasuryPercent;
+    uint256 public immutable transferFeeBurnPercent;
+    uint256 public immutable transferStopBurnWhenLowSupply;
 
     BotPrevent public BP;
     bool public bpEnabled = false;
     bool public BPDisabledForever = false;
 
-    function treasuryAddress() external view returns (address){
-        return _treasuryAddress;
-    }
-
-    function transferFeeTreasuryPercent() external view returns (uint256){
-        return _transferFeeTreasuryPercent;
-    }
-
-    function transferFeeBurnPercent() external view returns (uint256){
-        return _transferFeeBurnPercent;
-    }
-
-    function transferStopBurnWhenLowSupply() external view returns (uint256){
-        return _transferStopBurnWhenLowSupply;
-    }
-
     function transferFeePercent() external view returns (uint256){
-        return _transferFeeTreasuryPercent + _transferFeeBurnPercent;
+        return transferFeeTreasuryPercent + transferFeeBurnPercent;
     }
 
     function addAddressToWhitelist(address whitelistAddress) external {
+        require(whitelistAddress != address(0), "GameCoin: address must not be zero");
         require(hasRole(WHITELISTER_ROLE, _msgSender()), "GameCoin: must have whitelister role");
         _senderWhitelist[whitelistAddress] = true;
         _recipientWhitelist[whitelistAddress] = true;
@@ -97,6 +88,7 @@ contract GameCoin is AccessControlEnumerable, ERC20Burnable, ERC20Pausable {
     }
 
     function removeAddressFromWhitelist(address whitelistAddress) external {
+        require(whitelistAddress != address(0), "GameCoin: address must not be zero");
         require(hasRole(WHITELISTER_ROLE, _msgSender()), "GameCoin: must have whitelister role");
         _senderWhitelist[whitelistAddress] = false;
         _recipientWhitelist[whitelistAddress] = false;
@@ -104,12 +96,14 @@ contract GameCoin is AccessControlEnumerable, ERC20Burnable, ERC20Pausable {
     }
 
     function addAddressToSenderWhitelist(address whitelistAddress) external {
+        require(whitelistAddress != address(0), "GameCoin: address must not be zero");
         require(hasRole(WHITELISTER_ROLE, _msgSender()), "GameCoin: must have whitelister role");
         _senderWhitelist[whitelistAddress] = true;
         emit EventWhiteList(whitelistAddress, true);
     }
 
     function addAddressToRecipientWhitelist(address whitelistAddress) external {
+        require(whitelistAddress != address(0), "GameCoin: address must not be zero");
         require(hasRole(WHITELISTER_ROLE, _msgSender()), "GameCoin: must have whitelister role");
         _recipientWhitelist[whitelistAddress] = true;
         emit EventWhiteList(whitelistAddress, true);
@@ -136,7 +130,7 @@ contract GameCoin is AccessControlEnumerable, ERC20Burnable, ERC20Pausable {
      * @dev Pause token transfer, can be used to prevent attack
      *
      */
-    function pause() public {
+    function pause() external {
         require(hasRole(PAUSER_ROLE, _msgSender()), "GameCoin: must have pauser role");
         _pause();
     }
@@ -144,7 +138,7 @@ contract GameCoin is AccessControlEnumerable, ERC20Burnable, ERC20Pausable {
      * @dev Unpause token transfer
      *
      */
-    function unpause() public {
+    function unpause() external {
         require(hasRole(PAUSER_ROLE, _msgSender()), "GameCoin: must have pauser role");
         _unpause();
     }
@@ -188,17 +182,17 @@ contract GameCoin is AccessControlEnumerable, ERC20Burnable, ERC20Pausable {
             super._transfer(sender, recipient, amount);
         } else {
             // calculate treasury token amount
-            uint256 treasury_token_amount = (amount * _transferFeeTreasuryPercent) / 100;
+            uint256 treasury_token_amount = (amount * transferFeeTreasuryPercent) / 100;
             // burn token only if totalSupply > minimumSupply else put all Fee to treasury
             uint256 burn_token_amount = 0;
-            if (totalSupply() > _transferStopBurnWhenLowSupply) {
-                burn_token_amount = (amount * _transferFeeBurnPercent) / 100;
+            if (totalSupply() > transferStopBurnWhenLowSupply) {
+                burn_token_amount = (amount * transferFeeBurnPercent) / 100;
             } else {
-                treasury_token_amount += (amount * _transferFeeBurnPercent) / 100;
+                treasury_token_amount += (amount * transferFeeBurnPercent) / 100;
             }
             require(treasury_token_amount + burn_token_amount < amount, "ERC20 Deflationary: transfer fee is greater or equal than amount");
             // treasury token
-            super._transfer(sender, _treasuryAddress, treasury_token_amount);
+            super._transfer(sender, treasuryAddress, treasury_token_amount);
             // burn token
             if (burn_token_amount > 0) {
                 _burn(sender, burn_token_amount);
